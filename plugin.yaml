@@ -33,3 +33,8 @@ config_schema:
     default: 600
     label: Create timeout (seconds)
     description: "How long to wait for a new Space to be ready."
+  delete_on_exit:
+    type: bool
+    default: true
+    label: Delete the Space when Hermes finishes
+    description: "Applies only to Spaces the plugin creates. A Space you name is never deleted."

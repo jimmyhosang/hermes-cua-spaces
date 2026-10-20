@@ -99,8 +99,10 @@ class CuaSpaceEnvironment(BaseEnvironment):
         self._closed = False
 
         if settings.creates:
-            self._space, created = client.ensure(space_name_for(task_id), settings)
-            self._delete_on_cleanup = not persistent
+            # Spaces we will delete get a unique name, so parallel Hermes runs never share one.
+            deleting = settings.delete_on_exit or not persistent
+            self._space, created = client.ensure(space_name_for(task_id, unique=deleting), settings)
+            self._delete_on_cleanup = deleting
             logger.info("Cua Space %s %s", self._space.name, "created" if created else "reused")
         else:
             self._space = client.attach(settings.space)

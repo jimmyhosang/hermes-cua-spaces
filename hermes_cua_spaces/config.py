@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
@@ -15,6 +16,7 @@ DEFAULT_CREATE_TIMEOUT_S = 600
 ENV_SPACE = "HERMES_CUA_SPACE"
 ENV_ON = "HERMES_CUA_ON"
 ENV_IMAGE = "HERMES_CUA_IMAGE"
+ENV_KEEP = "HERMES_CUA_KEEP"
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class Settings:
     on: str = ""
     image: str = DEFAULT_IMAGE
     create_timeout_s: int = DEFAULT_CREATE_TIMEOUT_S
+    # Delete a Space this plugin created when the Hermes session ends. Never applies to a Space you named.
+    delete_on_exit: bool = True
 
     @property
     def creates(self) -> bool:
@@ -66,13 +70,25 @@ def load_settings(
         timeout = int(cfg("create_timeout", DEFAULT_CREATE_TIMEOUT_S))
     except (TypeError, ValueError):
         timeout = DEFAULT_CREATE_TIMEOUT_S
-    return Settings(space=space or CREATE, on=on, image=image, create_timeout_s=timeout).validate()
+    keep_env = str(env.get(ENV_KEEP) or "").strip().lower()
+    if keep_env:
+        delete = keep_env not in ("1", "true", "yes", "on")
+    else:
+        raw = cfg("delete_on_exit", True)
+        delete = raw if isinstance(raw, bool) else str(raw).strip().lower() not in ("0", "false", "no", "off")
+    return Settings(
+        space=space or CREATE, on=on, image=image, create_timeout_s=timeout, delete_on_exit=delete
+    ).validate()
 
 
 _SAFE = re.compile(r"[^a-z0-9-]+")
 
 
-def space_name_for(task_id: str, profile: str = "") -> str:
-    """A stable, valid Space name for a Hermes task: `hermes-<task>`."""
+def space_name_for(task_id: str, unique: bool = False) -> str:
+    """A valid Space name for a Hermes task: `hermes-<task>`, plus a short random tag when `unique`.
+
+    Unique names keep two Hermes runs from ever sharing (and deleting) one Space.
+    """
     base = _SAFE.sub("-", f"{task_id or 'default'}".lower()).strip("-")[:24] or "default"
-    return f"hermes-{base}"
+    name = f"hermes-{base}"
+    return f"{name}-{uuid.uuid4().hex[:6]}" if unique else name

@@ -61,7 +61,8 @@ def test_timeout_is_reported(client):
 
 def test_create_mode_uses_task_name_and_settings(client):
     env = make(client, task_id="Session 9", settings=Settings(image="linux", on="local"))
-    assert client.calls[0] == ("ensure", "hermes-session-9", "linux", "local")
+    assert client.calls[0][:1] == ("ensure",) and client.calls[0][1].startswith("hermes-session-9-")
+    assert client.calls[0][2:] == ("linux", "local")
     env.cleanup()
 
 
@@ -72,10 +73,15 @@ def test_named_space_is_attached_and_never_deleted(client):
     assert client.deleted == []
 
 
-def test_created_space_deleted_only_when_not_persistent(client):
-    make(client, persistent=True).cleanup()
+def test_created_space_deleted_by_default_and_kept_when_asked(client):
+    make(client, settings=Settings(delete_on_exit=False), persistent=True).cleanup()
     assert client.deleted == []
-    env = make(client, persistent=False)
+    assert client.calls[-1][1] == "hermes-t1"  # kept Spaces have a stable name
+    env = make(client, persistent=True)
+    env.cleanup()
+    assert client.deleted == [client.space.id]
+    client.deleted.clear()
+    env = make(client, settings=Settings(delete_on_exit=False), persistent=False)
     env.cleanup()
     env.cleanup()  # idempotent
     assert client.deleted == [client.space.id]

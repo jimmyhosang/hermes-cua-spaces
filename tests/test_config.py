@@ -42,3 +42,14 @@ def test_space_name_is_safe_and_stable():
     assert space_name_for("Task_ID/42 x") == "hermes-task-id-42-x"
     assert space_name_for("") == "hermes-default"
     assert len(space_name_for("x" * 100)) <= len("hermes-") + 24
+
+
+def test_delete_on_exit_default_and_overrides():
+    assert load_settings(None, {}).delete_on_exit is True
+    assert load_settings(lambda k, default=None: False if k == "delete_on_exit" else default, {}).delete_on_exit is False
+    assert load_settings(None, {"HERMES_CUA_KEEP": "1"}).delete_on_exit is False
+
+
+def test_unique_names_differ():
+    assert space_name_for("a", unique=True) != space_name_for("a", unique=True)
+    assert space_name_for("a", unique=True).startswith("hermes-a-")
