@@ -8,6 +8,7 @@ Here that is `cua sandbox exec -i`, so it needs the `cua` command line tool, ver
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -75,7 +76,7 @@ def forget_cli_checks() -> None:
 
 
 def stream_argv(space_ref: str, user: Optional[str] = None) -> Optional[list[str]]:
-    """`cua sandbox exec -i [--user U] <space> --`, or None (with one logged warning) when the `cua`
+    """`[env CUA_HOME=...] cua sandbox exec -i [--user U] <space> --`, or None (with one logged warning) when the `cua`
     command is missing or too old to stream."""
     cli = shutil.which("cua")
     if cli is None:
@@ -93,6 +94,11 @@ def stream_argv(space_ref: str, user: Optional[str] = None) -> Optional[list[str
         )
         return None
     argv = [cli, "sandbox", "exec", "-i"]
+    # Hermes starts the browser and the computer_use driver from a scrubbed environment. `cua` finds its
+    # Spaces under CUA_HOME, so hand it over (only when it is set: the default needs nothing).
+    cua_home = os.environ.get("CUA_HOME")
+    if cua_home and os.name != "nt":
+        argv = ["env", f"CUA_HOME={cua_home}", *argv]
     if user:
         argv += ["--user", user]
     return argv + [space_ref, "--"]

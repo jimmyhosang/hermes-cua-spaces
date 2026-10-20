@@ -41,10 +41,24 @@ def make_env(client, cwd="~"):
 def test_exec_prefix_is_cua_sandbox_exec(client, tmp_path, monkeypatch):
     exe = fake_cua(tmp_path / "bin")
     monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("CUA_HOME", raising=False)
     _, env = make_env(client)
     assert env.exec_prefix() == [str(exe), "sandbox", "exec", "-i", client.space.id, "--"]
     assert env.exec_prefix(user="agent", interactive=False) == [
         str(exe), "sandbox", "exec", "-i", "--user", "agent", client.space.id, "--",
+    ]
+
+
+@posix_only
+def test_cua_home_travels_with_the_command(client, tmp_path, monkeypatch):
+    # The browser and the computer_use driver start from a scrubbed environment; `cua` must still
+    # look in the same CUA_HOME as the plugin.
+    exe = fake_cua(tmp_path / "bin")
+    monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CUA_HOME", "/srv/cua-home")
+    _, env = make_env(client)
+    assert env.exec_prefix(user="agent") == [
+        "env", "CUA_HOME=/srv/cua-home", str(exe), "sandbox", "exec", "-i", "--user", "agent", client.space.id, "--",
     ]
 
 
