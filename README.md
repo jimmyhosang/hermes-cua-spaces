@@ -45,6 +45,7 @@ The plugin keeps its settings in Hermes's `config.yaml`, under `plugins.entries.
 | `space` | `create` | `create` makes a Space for you. Or give the name or id of a Space you already have, for example `my-box`. |
 | `on` | your Cua default | Where a new Space goes: `local`, `cloud`, `host:<machine>`, or the name of one of your machines. |
 | `image` | `linux` | The image for a new Space. `linux` is Ubuntu with a desktop. |
+| `delete_on_exit` | `true` | Delete a Space the plugin created when Hermes finishes. Set `false` to keep it for next time. A Space you named is never deleted. |
 | `create_timeout` | `600` | Seconds to wait for a new Space to be ready. |
 
 Examples:
@@ -61,8 +62,8 @@ The environment variables `HERMES_CUA_SPACE`, `HERMES_CUA_ON` and `HERMES_CUA_IM
 
 How the plugin picks a Space:
 
-- `space: create` and `terminal.container_persistent: true` (Hermes's default): the plugin uses one Space called `hermes-default`. It makes it the first time and reuses it after that, so your files are still there next session. The plugin leaves it running when Hermes exits. Stop it with `cua spaces stop hermes-default`, or delete it with `cua spaces delete hermes-default`.
-- `space: create` and `terminal.container_persistent: false`: each Hermes session gets its own fresh Space and the plugin deletes it when the session ends.
+- `space: create` (the default): each Hermes run makes its own Space, named `hermes-<task>-<random>`, does the work there and deletes it when it finishes. Two Hermes runs at once get two Spaces and never touch each other's files.
+- `space: create` and `delete_on_exit: false`: the plugin makes one Space called `hermes-default` the first time and reuses it after that, so your files are still there next session. It stays running when Hermes exits. Stop it with `cua spaces stop hermes-default` or delete it with `cua spaces delete hermes-default`.
 - `space: my-box`: the plugin uses that Space and never deletes or stops it. Because it is your machine and not a throwaway one, Hermes keeps asking before risky commands.
 
 ### Sign-in and keys
@@ -90,7 +91,7 @@ Give each Hermes its own Space.
 
   `build-a` and `build-b` must exist (create them with `cua spaces create linux --name build-a`).
 
-- Throwaway Spaces, one per session: set `hermes config set terminal.container_persistent false`. Every Hermes you start makes its own Space and deletes it on exit, so you can start as many as your machine can hold.
+- Throwaway Spaces, one per run: this is the default. Every Hermes you start makes its own Space and deletes it when it finishes, so you can start as many as your machine can hold.
 
 ## Two other ways to use Cua with Hermes
 
