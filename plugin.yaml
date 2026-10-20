@@ -1,0 +1,35 @@
+name: cua-spaces
+version: "0.1.0"
+manifest_version: 2
+description: Run Hermes terminal, file and code tools inside a Cua Space (an isolated Linux machine you can watch live).
+author: Cua
+kind: backend
+license: MIT
+homepage: https://github.com/trycua/hermes-cua-spaces
+tags: [terminal, sandbox, cua]
+python_dependencies:
+  - "cua>=0.5.0,<0.6"
+provides_tools: []
+provides_hooks: []
+capabilities: []
+config_schema:
+  space:
+    type: str
+    default: create
+    label: Space
+    description: "'create' makes a Space for you. Or give the name or id of a Space that already exists."
+  on:
+    type: str
+    default: ""
+    label: Where
+    description: "local, cloud, host:<machine> or a machine name. Empty uses your Cua default."
+  image:
+    type: str
+    default: linux
+    label: Image
+    description: "Image for a new Space: linux, or any image name Cua accepts."
+  create_timeout:
+    type: int
+    default: 600
+    label: Create timeout (seconds)
+    description: "How long to wait for a new Space to be ready."
