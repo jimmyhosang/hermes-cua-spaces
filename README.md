@@ -47,6 +47,7 @@ The plugin keeps its settings in Hermes's `config.yaml`, under `plugins.entries.
 | `space` | `create` | `create` makes a Space for you. Or give the name or id of a Space you already have, for example `my-box`. |
 | `on` | your Cua default | Where a new Space goes: `local`, `cloud`, `host:<machine>`, or the name of one of your machines. |
 | `image` | `linux` | The image for a new Space. `linux` is Ubuntu with a desktop. `windows` makes a Windows Space (see [Windows Spaces](#windows-spaces)). |
+| `desktop` | `false` | Install what Bot Desktop, `computer_use` and the browser need into a Linux Space that lacks it (see [The desktop stack](#the-desktop-stack)). |
 | `delete_on_exit` | `true` | Delete a Space the plugin created when Hermes finishes. Set `false` to keep it for next time. A Space you named is never deleted. |
 | `create_timeout` | `600` | Seconds to wait for a new Space to be ready. |
 
@@ -60,7 +61,7 @@ hermes config set plugins.entries.cua-spaces.settings.space my-box
 hermes config set plugins.entries.cua-spaces.settings.on "spare mac mini"
 ```
 
-The environment variables `HERMES_CUA_SPACE`, `HERMES_CUA_ON` and `HERMES_CUA_IMAGE` override the same settings for one shell.
+The environment variables `HERMES_CUA_SPACE`, `HERMES_CUA_ON`, `HERMES_CUA_IMAGE` and `HERMES_CUA_DESKTOP` override the same settings for one shell.
 
 How the plugin picks a Space:
 
@@ -153,10 +154,20 @@ If a Space cannot start PowerShell, the plugin says so and names the Space. Linu
 | `terminal` tool, background processes | yes |
 | File tools (read, write, patch, search) | yes |
 | `execute_code` | yes |
-| Bot Desktop, `computer_use`, browser tools | yes on Linux and macOS Spaces, with a Hermes that includes [#142225](https://github.com/NousResearch/hermes-agent/pull/142225) (newer than v0.22.2), the `cua` command on your PATH (version with `cua sandbox exec -i`), and a Space whose image has the desktop stack. Not on Windows Spaces, and not with `plugins.isolation: host` |
+| Bot Desktop, `computer_use`, browser tools | yes in Linux Spaces, with a Hermes that includes [#142225](https://github.com/NousResearch/hermes-agent/pull/142225) (newer than v0.22.2), the `cua` command on your PATH (a version with `cua sandbox exec -i`) and the desktop stack in the Space (see below). Not in macOS or Windows Spaces, and not with `plugins.isolation: host` |
 | The same on an older Hermes | no. They use your own machine, as before |
 
-On a supported Hermes, `bot_desktop.placement: auto` puts the screen, `computer_use` and the browser in the Space, through `cua sandbox exec -i <space> -- bash -c ...`: a long-lived stream into the Space with stdin and stdout open. If the `cua` command is missing or too old, the plugin logs what to install and Hermes says the screen cannot follow the terminal; set `bot_desktop.placement: gateway` to run it on your machine instead. The default `linux` image has a desktop; check that Chromium and `cua-driver` are in your image if you use another.
+On a supported Hermes, `bot_desktop.placement: auto` puts the screen, `computer_use` and the browser in the Space, through `cua sandbox exec -i <space> -- bash -c ...`: a long-lived stream into the Space with stdin and stdout open, ended when Hermes stops. If the `cua` command is missing or too old, the plugin logs what to install and Hermes says the screen cannot follow the terminal; set `bot_desktop.placement: gateway` to run it on your machine instead.
+
+### The desktop stack
+
+The default `linux` image has an Xfce desktop, but Hermes starts its own display and browser in the Space and needs TigerVNC (`Xvnc`), Playwright Chromium, `agent-browser` and `cua-driver` there. Let the plugin install them once:
+
+```bash
+hermes config set plugins.entries.cua-spaces.settings.desktop true
+```
+
+The next Hermes run installs them into the Space it uses (a few minutes, needs internet and `sudo` in the Space, nothing happens if they are already there). With a Space you keep (`delete_on_exit: false`, or one you named) this happens once. To install by hand instead: `cua sandbox exec -i my-box -- bash -s < hermes_cua_spaces/desktop-stack.sh`. If the install fails the terminal and file tools still work and the log says what to do.
 
 ## What the plugin does and sends
 

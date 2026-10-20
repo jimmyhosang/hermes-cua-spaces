@@ -92,6 +92,15 @@ def test_windows_space_has_no_exec_prefix(client, tmp_path, monkeypatch):
     assert env.exec_prefix() is None
 
 
+@posix_only
+def test_macos_space_has_no_exec_prefix(client, tmp_path, monkeypatch):
+    exe = fake_cua(tmp_path / "bin")
+    monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ['PATH']}")
+    client.space.os = "macos"
+    _, env = make_env(client)
+    assert env.exec_prefix() is None
+
+
 def test_provider_declares_streams_and_home():
     p = plugin.CuaSpacesProvider()
     assert p.supports_streams is True

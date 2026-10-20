@@ -11,7 +11,7 @@ from typing import Any, Callable, Optional
 
 from tools.environments.base import BaseEnvironment
 
-from . import streams
+from . import desktop, streams
 from . import windows as win
 from .client import ExecResult, SpaceHandle, SpacesClient
 from .config import Settings, space_name_for
@@ -142,8 +142,11 @@ class CuaSpaceEnvironment(BaseEnvironment):
             self._windows_files = None
             if cwd in _generic_cwds() or not win.looks_like_windows_path(cwd):
                 cwd = self._win.home  # the user profile folder
-        elif cwd in _generic_cwds():
-            cwd = self._space.home()
+        else:
+            if cwd in _generic_cwds():
+                cwd = self._space.home()
+            if settings.desktop and getattr(self._space, "os", "linux") in ("", "linux"):
+                desktop.ensure_desktop_stack(self._space)
         super().__init__(cwd=cwd, timeout=timeout)
         if self._win is None:
             self.init_session()
@@ -172,11 +175,13 @@ class CuaSpaceEnvironment(BaseEnvironment):
         """Argv that runs the words after it inside this Space with stdin and stdout open.
 
         Hermes uses it to run Bot Desktop, `computer_use` and the browser in the Space. None when it
-        cannot right now: a Windows Space (Hermes appends `bash -c`), or the `cua` command is missing
+        cannot right now: a Windows or macOS Space (Bot Desktop is Linux only), or the `cua` command is missing
         or too old (a warning in the log says what to install).
         """
         if self._win is not None or self._closed:
             return None
+        if getattr(self._space, "os", "linux") not in ("", "linux"):
+            return None  # Bot Desktop is Xvnc + Xfce: Linux only
         return streams.stream_argv(self._space.id, user)
 
     def get_temp_dir(self) -> str:
