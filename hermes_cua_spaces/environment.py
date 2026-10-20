@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 
 from tools.environments.base import BaseEnvironment
 
+from . import streams
 from . import windows as win
 from .client import ExecResult, SpaceHandle, SpacesClient
 from .config import Settings, space_name_for
@@ -18,8 +19,13 @@ from .errors import CuaSpacesError, UnsupportedSpaceError
 
 logger = logging.getLogger(__name__)
 
-# Hermes passes its generic container default ("/root") when the user set no working folder.
-_GENERIC_CWDS = ("", "/root", "~")
+def _generic_cwds() -> tuple[str, ...]:
+    """Working folders that mean "the user set none": start in the Space's own home.
+
+    A Hermes that supports `default_cwd` sends "~" (the provider declares it). An older Hermes sends
+    its generic container default "/root" instead.
+    """
+    return ("", "~") if streams.hermes_sets_start_dir() else ("", "/root", "~")
 
 
 class _WindowsScript(str):
@@ -134,9 +140,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
         if getattr(self._space, "os", "") == "windows":
             self._win = self._probe_windows()
             self._windows_files = None
-            if cwd in _GENERIC_CWDS or not win.looks_like_windows_path(cwd):
+            if cwd in _generic_cwds() or not win.looks_like_windows_path(cwd):
                 cwd = self._win.home  # the user profile folder
-        elif cwd in _GENERIC_CWDS:
+        elif cwd in _generic_cwds():
             cwd = self._space.home()
         super().__init__(cwd=cwd, timeout=timeout)
         if self._win is None:
@@ -161,6 +167,17 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
             self._windows_files = WindowsFiles(self)
         return self._windows_files
+
+    def exec_prefix(self, *, user: Optional[str] = None, interactive: bool = True) -> Optional[list]:
+        """Argv that runs the words after it inside this Space with stdin and stdout open.
+
+        Hermes uses it to run Bot Desktop, `computer_use` and the browser in the Space. None when it
+        cannot right now: a Windows Space (Hermes appends `bash -c`), or the `cua` command is missing
+        or too old (a warning in the log says what to install).
+        """
+        if self._win is not None or self._closed:
+            return None
+        return streams.stream_argv(self._space.id, user)
 
     def get_temp_dir(self) -> str:
         win_info = getattr(self, "_win", None)

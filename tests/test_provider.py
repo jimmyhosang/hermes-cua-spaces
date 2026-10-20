@@ -34,6 +34,6 @@ def test_register_wires_provider():
 
 def test_create_environment_passes_persistence(client):
     p = plugin.CuaSpacesProvider(get_config=lambda k, default=None: default, client=client)
-    env = p.create_environment(cwd="/root", timeout=10, task_id="a", container_config={"container_persistent": False})
+    env = p.create_environment(cwd="~", timeout=10, task_id="a", container_config={"container_persistent": False})
     env.cleanup()
     assert client.deleted == [client.space.id]

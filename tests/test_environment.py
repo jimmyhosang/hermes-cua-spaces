@@ -4,11 +4,15 @@ import pytest
 pytest.importorskip("tools.environments.base", reason="needs Hermes installed")
 
 from hermes_cua_spaces.config import Settings  # noqa: E402
+from hermes_cua_spaces.streams import hermes_sets_start_dir  # noqa: E402
+
+# What this Hermes sends when the user set no working folder.
+GENERIC_CWD = "~" if hermes_sets_start_dir() else "/root"
 from hermes_cua_spaces.environment import CuaSpaceEnvironment  # noqa: E402
 
 
 def make(client, **kw):
-    args = dict(cwd="/root", timeout=30, task_id="t1", settings=Settings(), client=client, persistent=True)
+    args = dict(cwd=GENERIC_CWD, timeout=30, task_id="t1", settings=Settings(), client=client, persistent=True)
     args.update(kw)
     return CuaSpaceEnvironment(**args)
 
@@ -28,7 +32,7 @@ def test_exit_code(client):
 
 
 def test_default_cwd_is_space_home_not_root(client, space):
-    env = make(client, cwd="/root")
+    env = make(client, cwd=GENERIC_CWD)
     assert env.cwd == str(space.root)
     assert env.execute("pwd")["output"].strip() == str(space.root)
     env.cleanup()
