@@ -154,7 +154,7 @@ If a Space cannot start PowerShell, the plugin says so and names the Space. Linu
 | `terminal` tool, background processes | yes |
 | File tools (read, write, patch, search) | yes |
 | `execute_code` | yes |
-| Bot Desktop, `computer_use`, browser tools | yes in Linux Spaces, with a Hermes that includes [#142225](https://github.com/NousResearch/hermes-agent/pull/142225) (newer than v0.22.2), the `cua` command on your PATH (a version with `cua sandbox exec -i`) and the desktop stack in the Space (see below). Not in macOS or Windows Spaces, and not with `plugins.isolation: host` |
+| Bot Desktop, `computer_use`, browser tools | yes in Linux Spaces, with a Hermes that includes [#142225](https://github.com/NousResearch/hermes-agent/pull/142225) (newer than v0.22.2), the `cua` command on your PATH (0.7.0 or newer, the first with `cua sandbox exec -i`) and the desktop stack in the Space (see below). Not in macOS or Windows Spaces, and not with `plugins.isolation: host` |
 | The same on an older Hermes | no. They use your own machine, as before |
 
 On a supported Hermes, `bot_desktop.placement: auto` puts the screen, `computer_use` and the browser in the Space, through `cua sandbox exec -i <space> -- bash -c ...`: a long-lived stream into the Space with stdin and stdout open, ended when Hermes stops. If the `cua` command is missing or too old, the plugin logs what to install and Hermes says the screen cannot follow the terminal; set `bot_desktop.placement: gateway` to run it on your machine instead.
