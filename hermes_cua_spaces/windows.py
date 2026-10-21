@@ -4,10 +4,9 @@ Hermes writes its terminal tools for a POSIX shell. A Windows Space has none, so
 
 * runs the `terminal` tool's commands in PowerShell (`pwsh` if the Space has it, else the
   `powershell.exe` every Windows has),
-* runs the commands Hermes builds for its other tools (file search, background processes, code
-  execution) in Git Bash when the Space has Git for Windows, and otherwise says in plain words
-  that this tool needs it,
-* keeps the file read/write tools off the shell entirely (see `windows_files.py`).
+* runs the commands Hermes builds for its other tools (file read/write/patch, search, background
+  processes, code execution) in Git Bash, as Hermes itself does on Windows. A Space without Git for
+  Windows gets it installed first (see `windows_setup.py`). Hermes's own code is never replaced.
 
 Every script is staged as a file in the Space and started with a short command line. That keeps
 quoting, the Windows 8,191-character command limit and the console code page out of the way:
@@ -22,19 +21,27 @@ import shlex
 from dataclasses import dataclass
 
 # What the plugin tells the model and the user about a Windows Space.
-TERMINAL_NOTE = "On this Windows machine the terminal tool runs PowerShell, not bash."
-
-NO_BASH_MESSAGE = (
-    "This Hermes tool runs Unix shell commands, and this Windows Space has no Unix shell (bash). "
-    "The terminal tool still works here, in PowerShell, and so do reading, writing and patching files. "
-    "To use this tool too, install Git for Windows in the Space (in its PowerShell: "
-    "`winget install --id Git.Git -e`), then try again."
+TERMINAL_NOTE = (
+    "On this Windows machine the terminal tool runs PowerShell, not bash. The file tools (read_file, "
+    "write_file, patch, search_files) take Git Bash paths: write C:\\Users\\me\\a.txt as /c/Users/me/a.txt, "
+    "or use a path relative to the terminal's current folder."
 )
 
 # Windows PowerShell 5.1 and PowerShell 7 both run these options.
 _PS_FLAGS = "-NoProfile -NonInteractive -ExecutionPolicy Bypass"
 
 _DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+_CONSOLE_CODES = re.compile(r"(?:\x1b\[[0-9;?]*[A-Za-z]|#< CLIXML\r?\n<Objs[^\n]*(?:\r?\n)?)+\s*$")
+_CLIXML = re.compile(r"#< CLIXML\r?\n<Objs.*?</Objs>\r?\n?", re.S)
+
+
+def clean_output(text: str) -> str:
+    """Drop what Windows PowerShell 5.1 adds to redirected output: a trailing screen-clear sequence
+    (`ESC[H ESC[2J ESC[3J`) and CLIXML progress records. Command output itself is left alone."""
+    text = _CLIXML.sub("", text)
+    return _CONSOLE_CODES.sub("", text)
 
 
 def b64(text: str) -> str:
@@ -60,6 +67,36 @@ def looks_like_windows_path(path: str) -> bool:
     return bool(_DRIVE.match(path)) or path.startswith("\\\\")
 
 
+_MSYS = re.compile(r"^/([A-Za-z])(/.*)?$")
+_WIN_DRIVE = re.compile(r"^([A-Za-z]):([\\/].*)?$")
+
+
+def looks_like_msys_path(path: str) -> bool:
+    """`/c/Users/me`, the Git Bash form of `C:\\Users\\me`."""
+    return bool(_MSYS.match(path))
+
+
+def to_msys(path: str) -> str:
+    """`C:\\Users\\me` -> `/c/Users/me`.
+
+    Hermes runs on a Unix-style host: its file tools only treat a path starting with `/` as absolute,
+    and `C:/Users/me` would be taken as a relative one. The Git Bash form is absolute everywhere, so
+    the folder the plugin reports to Hermes uses it.
+    """
+    m = _WIN_DRIVE.match(path)
+    if not m:
+        return path
+    return "/" + m.group(1).lower() + (m.group(2) or "").replace("\\", "/")
+
+
+def from_msys(path: str) -> str:
+    """`/c/Users/me` -> `C:/Users/me`; anything else is only given forward slashes."""
+    m = _MSYS.match(path)
+    if m:
+        return m.group(1).upper() + ":" + (m.group(2) or "/")
+    return to_forward(path)
+
+
 @dataclass(frozen=True)
 class WindowsInfo:
     """What the first probe learned about the Space."""
@@ -73,6 +110,7 @@ class WindowsInfo:
 
 _PROBE = r"""
 $ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
 $pw = Get-Command pwsh | Select-Object -First 1
 $sh = 'powershell.exe'
 if ($pw) { $sh = 'pwsh' }
@@ -168,7 +206,8 @@ try {
     }
   }
 } finally {
-  $__here = (Get-Location -PSProvider FileSystem).ProviderPath
+  $__here = ((Get-Location -PSProvider FileSystem).ProviderPath) -replace '\\', '/'
+  if ($__here -match '^([A-Za-z]):(.*)$') { $__here = '/' + $Matches[1].ToLower() + $Matches[2] }
   __hw ("`n@MARKER@" + $__here + "@MARKER@`n")
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 }
@@ -187,7 +226,7 @@ def build_powershell_script(command: str, cwd: str, marker: str, stdin_path: str
         )
         command = f"$__in | & {{\n{command}\n}}"
     return (
-        _PS_WRAPPER.replace("@CWD@", b64(cwd))
+        _PS_WRAPPER.replace("@CWD@", b64(from_msys(cwd)))
         .replace("@CMD@", b64(command))
         .replace("@MARKER@", marker)
         .replace("@STDIN@", stdin)
@@ -196,13 +235,22 @@ def build_powershell_script(command: str, cwd: str, marker: str, stdin_path: str
 
 
 def powershell_line(info: WindowsInfo, path: str) -> str:
-    return f'{info.shell} {_PS_FLAGS} -File "{path}"'
+    """The command line that runs a staged script file. It holds no double quote.
+
+    A Space starts a command line with `cmd.exe /C`, which mangles quotes (`-File "a b.ps1"` reaches
+    PowerShell as `-File \\"a b.ps1\\"`). So the path travels inside `-EncodedCommand`, which also copes
+    with spaces in it, and the script's exit code is passed on.
+    """
+    # No progress records: with output redirected PowerShell would print them as CLIXML noise.
+    runner = f"$ProgressPreference = 'SilentlyContinue'\n& {ps_quote(path)}\nexit $LASTEXITCODE\n"
+    return f"{info.shell} {_PS_FLAGS} -EncodedCommand {encoded_command(runner)}"
 
 
 # -- Git Bash: the commands Hermes builds for its other tools --
 
 _BASH_LAUNCHER = r"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo.FileName = @BASH@
 $p.StartInfo.Arguments = '-l "' + @SCRIPT@ + '"'
@@ -219,20 +267,48 @@ exit $p.ExitCode
 """
 
 
+_PY_PATH = (
+    # A Python installed after the Space's agent started is not on that agent's PATH yet.
+    'for __d in "/c/Program Files"/Python3*/ "${LOCALAPPDATA:-/nonexistent}"/Programs/Python/Python3*/; do\n'
+    '  [ -x "${__d}python.exe" ] && PATH="${__d%/}:${__d%/}/Scripts:$PATH"\n'
+    "done\n"
+    "export PATH\n"
+)
+
+_PY3_SHIM = (
+    # Hermes runs its code tool with `python3` (through `exec`, so a shell function would not do).
+    # Windows has `python` (and a Store stub called `python3` that does nothing): when `python3` is
+    # not a real interpreter, put a one-line `python3` script for the real one first on PATH.
+    '__p3="$(command -v python3 2>/dev/null)"\n'
+    'case "$__p3" in ""|*/WindowsApps/*)\n'
+    "  for __p in python py; do\n"
+    '    __pp="$(command -v $__p 2>/dev/null)"\n'
+    '    case "$__pp" in ""|*/WindowsApps/*) ;; *)\n'
+    '      __sd="${TMPDIR:-/tmp}/hermes-cua-bin"; mkdir -p "$__sd"\n'
+    "      printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$__pp\" > \"$__sd/python3\"; chmod +x \"$__sd/python3\"\n"
+    '      PATH="$__sd:$PATH"; export PATH; break ;;\n'
+    "    esac\n"
+    "  done ;;\n"
+    "esac\n"
+)
+
+
 def build_bash_script(command: str, cwd: str, marker: str) -> str:
     """A bash script (LF endings) that runs `command` in `cwd` and prints the folder between `marker`s.
 
-    `pwd -W` gives the Windows form of the folder (`C:/Users/me`), so the next command, which may
-    run in PowerShell, can use it.
+    `pwd` gives the Git Bash form of the folder (`/c/Users/me`), which is the form Hermes's file
+    tools need; the PowerShell side converts it back when it starts the next command there.
     """
     return (
         "exec 2>&1\n"
         "trap 'rm -f -- \"$0\"' EXIT\n"
         'export AI_AGENT="${AI_AGENT:-hermes-agent}" HERMES_AGENT="${HERMES_AGENT:-true}"\n'
-        f"builtin cd -- {shlex.quote(to_forward(cwd))} || exit 126\n"
+        + _PY_PATH
+        + _PY3_SHIM
+        + f"builtin cd -- {shlex.quote(from_msys(cwd))} || exit 126\n"
         f"eval {shlex.quote(command)}\n"
         "__hermes_ec=$?\n"
-        f"printf '\\n{marker}%s{marker}\\n' \"$(pwd -W 2>/dev/null || pwd -P)\"\n"
+        f"printf '\\n{marker}%s{marker}\\n' \"$(pwd)\"\n"
         "exit $__hermes_ec\n"
     )
 
