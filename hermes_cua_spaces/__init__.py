@@ -16,11 +16,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agent.terminal_env_provider import TerminalEnvironmentProvider
 
-from . import streams, windows, windows_files
+from . import streams, windows
 from .config import Settings, load_settings
 from .errors import CuaSpacesError
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 _client_lock = threading.Lock()
 _client: Any = None
@@ -131,14 +131,12 @@ class CuaSpacesProvider(TerminalEnvironmentProvider):
         )
         if env.is_windows:
             self._windows_seen = True
-            windows_files.install()
         return env
 
 
 def register(ctx) -> None:
     """Plugin entry point."""
     get_config = getattr(ctx, "get_config", None)
-    windows_files.install()
     ctx.register_terminal_environment_provider(CuaSpacesProvider(get_config=get_config))
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import shlex
@@ -13,6 +14,7 @@ from tools.environments.base import BaseEnvironment
 
 from . import desktop, streams
 from . import windows as win
+from . import windows_setup
 from .client import ExecResult, SpaceHandle, SpacesClient
 from .config import Settings, space_name_for
 from .errors import CuaSpacesError, UnsupportedSpaceError
@@ -100,8 +102,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
     Terminal, file and code tools all go through `execute()`, so they all land in the Space.
 
-    On a Windows Space the terminal tool runs in PowerShell, file read/write/patch run natively,
-    and Hermes's Unix-shell tools run in Git Bash when the Space has it. See `windows.py`.
+    On a Windows Space the terminal tool runs in PowerShell and everything else Hermes builds (file
+    tools, search, background processes, code execution) runs in Git Bash, which the plugin installs
+    when the Space lacks it. See `windows.py`.
     """
 
     # Input for a command is staged as a file in the Space (see _run_bash), not embedded in the command.
@@ -139,9 +142,10 @@ class CuaSpaceEnvironment(BaseEnvironment):
         self._thread_state = threading.local()
         if getattr(self._space, "os", "") == "windows":
             self._win = self._probe_windows()
-            self._windows_files = None
-            if cwd in _generic_cwds() or not win.looks_like_windows_path(cwd):
-                cwd = self._win.home  # the user profile folder
+            if win.looks_like_windows_path(cwd) or win.looks_like_msys_path(cwd):
+                cwd = win.to_msys(cwd)
+            else:
+                cwd = win.to_msys(self._win.home)  # the user profile folder
         else:
             if cwd in _generic_cwds():
                 cwd = self._space.home()
@@ -150,6 +154,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
         super().__init__(cwd=cwd, timeout=timeout)
         if self._win is None:
             self.init_session()
+        else:
+            self._ensure_python()
+            self._bridge_drive_paths()
 
     # -- Windows Spaces --
     @property
@@ -159,17 +166,6 @@ class CuaSpaceEnvironment(BaseEnvironment):
     @property
     def windows_info(self) -> Optional[win.WindowsInfo]:
         return self._win
-
-    @property
-    def windows_files(self):
-        """Native file read/write for a Windows Space (None on Linux and macOS)."""
-        if self._win is None:
-            return None
-        if self._windows_files is None:
-            from .windows_files import WindowsFiles
-
-            self._windows_files = WindowsFiles(self)
-        return self._windows_files
 
     def exec_prefix(self, *, user: Optional[str] = None, interactive: bool = True) -> Optional[list]:
         """Argv that runs the words after it inside this Space with stdin and stdout open.
@@ -186,7 +182,8 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
     def get_temp_dir(self) -> str:
         win_info = getattr(self, "_win", None)
-        return win_info.temp if win_info is not None else super().get_temp_dir()
+        # Hermes only accepts a temp folder that starts with "/": give it the Git Bash form (/c/Users/..).
+        return win.to_msys(win_info.temp) if win_info is not None else super().get_temp_dir()
 
     def _probe_windows(self) -> win.WindowsInfo:
         try:
@@ -200,10 +197,52 @@ class CuaSpaceEnvironment(BaseEnvironment):
                 "commands there with PowerShell. Check that the Space is running (`cua spaces ls`) and "
                 "that `powershell.exe` works in it."
             )
+        if not info.bash:
+            info = self._install_git(info)
         logger.info(
             "Windows Space %s: shell=%s, git bash=%s", self._space.name, info.shell, info.bash or "none"
         )
         return info
+
+    def _install_git(self, info: win.WindowsInfo) -> win.WindowsInfo:
+        """Hermes runs its Unix-shell tools in Git Bash on Windows. Install Git for Windows when the Space lacks it."""
+        name = self._space.name
+        logger.info("Windows Space %s has no Git for Windows; installing it (a minute or two, once)", name)
+        self._win = info  # run_powershell needs the shell and temp folder
+        try:
+            result = self.run_powershell(windows_setup.install_script(), windows_setup.INSTALL_TIMEOUT_S)
+        except CuaSpacesError as exc:
+            raise UnsupportedSpaceError(windows_setup.missing_message(name, str(exc))) from exc
+        bash, reason = windows_setup.parse_result(result.output)
+        if result.exit_code != 0 or not bash:
+            tail = reason or " ".join(result.output.strip().splitlines()[-3:])
+            raise UnsupportedSpaceError(windows_setup.missing_message(name, tail))
+        return dataclasses.replace(info, bash=bash)
+
+    def _bridge_drive_paths(self) -> None:
+        """Make `/c/Users/me` mean `C:\\Users\\me` to native Windows programs too (see windows_setup)."""
+        try:
+            self.run_powershell(windows_setup.bridge_script(), 60)
+        except Exception:
+            logger.warning("Could not set up drive folders in Windows Space %s", self._space.name, exc_info=True)
+
+    def _ensure_python(self) -> None:
+        """Hermes's file tools (moves, binary reads) and `execute_code` run `python3` in the Space."""
+        try:
+            probe = self.execute("command -v python3 >/dev/null 2>&1 && echo yes")
+            if "yes" in probe.get("output", ""):
+                return
+            logger.info("Windows Space %s has no Python; installing it (a minute, once)", self._space.name)
+            result = self.run_powershell(windows_setup.install_python_script(), windows_setup.INSTALL_TIMEOUT_S)
+            if result.exit_code != 0:
+                tail = " ".join(result.output.strip().splitlines()[-2:])
+                logger.warning(
+                    "Could not install Python in Windows Space %s (%s). Moving files and execute_code need it: "
+                    "install Python in the Space (`winget install --id Python.Python.3.13 -e`).",
+                    self._space.name, tail,
+                )
+        except Exception:
+            logger.warning("Could not check for Python in Windows Space %s", self._space.name, exc_info=True)
 
     def run_powershell(self, script: str, timeout: int = 120) -> ExecResult:
         """Run a PowerShell script in the Windows Space and return its output and exit code.
@@ -292,7 +331,8 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
         def stage(path: str, text: str, *, bom: bool = False) -> None:
             data = text.encode("utf-8-sig" if bom else "utf-8", "surrogateescape")
-            self._call(lambda sp: sp.write(path, data))
+            target = win.from_msys(path)  # Hermes's temp paths are in Git Bash form
+            self._call(lambda sp: sp.write(target, data))
 
         def exec_fn() -> tuple[str, int]:
             try:
@@ -302,11 +342,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
                         staged_in = self._staged_stdin_path()
                         stage(staged_in, stdin_data)
                     ps_path = win.script_path(info, run_id, "ps1")
-                    stage(ps_path, win.build_powershell_script(script.command, script.cwd, self._cwd_marker, staged_in), bom=True)
+                    stage(ps_path, win.build_powershell_script(script.command, script.cwd, self._cwd_marker, win.from_msys(staged_in) if staged_in else ""), bom=True)
                     line = win.powershell_line(info, ps_path)
                 else:
-                    if not info.bash:
-                        return (win.NO_BASH_MESSAGE + "\n", 127)
                     command = script.command
                     if stdin_data is not None:
                         staged_in = self._staged_stdin_path()
@@ -320,7 +358,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
                 result: ExecResult = self._call(lambda sp: sp.run(line, timeout))
             except CuaSpacesError as exc:
                 return (f"[Cua Space error: {exc}]\n", 1)
-            return (result.output, result.exit_code)
+            out = win.clean_output(result.output)
+            logger.debug("Windows %s command in %s exited %s: %r", script.kind, self._space.name, result.exit_code, out[-300:])
+            return (out, result.exit_code)
 
         def cancel() -> None:
             try:

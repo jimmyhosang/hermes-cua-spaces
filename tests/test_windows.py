@@ -41,29 +41,50 @@ def test_windows_paths():
     assert win.to_forward("C:\\a\\b") == "C:/a/b"
 
 
+def test_clean_output_drops_powershell_noise_only():
+    assert win.clean_output("yes\n\nMK/c/xMK\n\x1b[H\x1b[2J\x1b[3J") == "yes\n\nMK/c/xMK\n"
+    assert win.clean_output('a\n#< CLIXML\n<Objs Version="1"><Obj/></Objs>') == "a\n"
+    assert win.clean_output("keep \x1b[31mred\x1b[0m text\n") == "keep \x1b[31mred\x1b[0m text\n"
+
+
+def test_git_bash_path_forms():
+    assert win.to_msys("C:\\Users\\cua") == "/c/Users/cua" and win.to_msys("D:/x y") == "/d/x y"
+    assert win.to_msys("/tmp/x") == "/tmp/x" and win.to_msys("C:") == "/c"
+    assert win.from_msys("/c/Users/cua") == "C:/Users/cua" and win.from_msys("/c") == "C:/"
+    assert win.from_msys("/tmp/x") == "/tmp/x" and win.from_msys("C:\\a\\b") == "C:/a/b"
+    assert win.looks_like_msys_path("/c/Users") and not win.looks_like_msys_path("/root")
+
+
+def test_bash_script_points_python3_at_the_real_python():
+    script = win.build_bash_script("python3 x.py", "/c/Users/cua", "MARK")
+    assert "WindowsApps" in script and "hermes-cua-bin" in script and "exec" in script
+
+
 def test_powershell_script_carries_command_as_base64_only():
     cmd = "Write-Output 'it''s \"quoted\"' ; $x = `n"
     script = win.build_powershell_script(cmd, "C:\\Users\\cua", "MARK")
     assert script.isascii() and cmd not in script
-    assert win.b64(cmd) in script and win.b64("C:\\Users\\cua") in script
+    assert win.b64(cmd) in script and win.b64("C:/Users/cua") in script
 
 
 def test_command_lines_stay_short_and_quote_free():
     info = win.WindowsInfo(shell="powershell.exe", home="C:\\Users\\cua", temp="C:/Users/cua/AppData/Local/Temp", bash="")
     line = win.powershell_line(info, win.script_path(info, "abc", "ps1"))
-    assert line == 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:/Users/cua/AppData/Local/Temp/hermes-cua-run-abc.ps1"'
+    assert '"' not in line and "'" not in line  # cmd.exe /C would mangle quotes
+    prefix = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "
+    assert line.startswith(prefix)
+    import base64
+
+    script = base64.b64decode(line[len(prefix):]).decode("utf-16-le")
+    assert "& 'C:/Users/cua/AppData/Local/Temp/hermes-cua-run-abc.ps1'" in script and "exit $LASTEXITCODE" in script
     assert len(win.probe_line()) < 4000
     assert len(win.cancel_line(info, "abc")) < 4000
 
 
-def test_bash_script_uses_windows_folder_form():
+def test_bash_script_reports_the_git_bash_folder():
     script = win.build_bash_script("echo 'hi'", "C:\\Users\\cua\\my dir", "MARK")
     assert "builtin cd -- 'C:/Users/cua/my dir'" in script
-    assert "pwd -W" in script and "\r" not in script
-
-
-def test_no_bash_message_is_plain():
-    assert "Git for Windows" in win.NO_BASH_MESSAGE and "terminal tool still works" in win.NO_BASH_MESSAGE
+    assert "pwd -W" not in script and "$(pwd)" in script and "\r" not in script
 
 
 # -- a Space that is really a local PowerShell --
@@ -74,13 +95,28 @@ class PowerShellSpace:
 
     os = "windows"
 
-    def __init__(self, root: Path, with_bash: bool):
+    def __init__(self, root: Path, with_bash: bool, install_works: bool = True):
         self.id, self.name, self.root = "local:win-test", "win-test", root
         self.with_bash = with_bash
+        self.install_works = install_works
+        self.installs = 0
         self.lines: list[str] = []
 
     def run(self, command: str, timeout_s: float) -> ExecResult:
         self.lines.append(command)
+        script = self._script_of(command)
+        if script is not None and "hermes-cua-git-ok" in script:
+            # The Git for Windows installer: a test machine cannot really install it.
+            self.installs += 1
+            if not self.install_works:
+                return ExecResult("hermes-cua-git-failed=installer: no network\n", 3)
+            self.with_bash = True
+            return ExecResult("hermes-cua-git-ok=/bin/bash\nhermes-cua-git-version=git version test\n", 0)
+        if script is not None and "hermes-cua-bridge" in script:
+            self.bridged = True
+            return ExecResult("hermes-cua-bridge=ok\n", 0)
+        if script is not None and "hermes-cua-python-ok" in script:
+            return ExecResult("hermes-cua-python-ok=/usr/bin/python3\n", 0)
         if not ON_WINDOWS:
             command = re.sub(r"^(powershell\.exe|pwsh)\b", PWSH.replace("\\", "/"), command)
         p = subprocess.run(command, shell=True, capture_output=True, timeout=timeout_s, cwd=self.root)
@@ -89,6 +125,19 @@ class PowerShellSpace:
             # The probe cannot find Git Bash off Windows, so this stands in for it.
             out += f"hermes-cua-bash={'/bin/bash' if self.with_bash else ''}\n"
         return ExecResult(out + p.stderr.decode("utf-8", "replace"), p.returncode)
+
+    @staticmethod
+    def _script_of(command: str):
+        m = re.search(r"-EncodedCommand (\S+)", command)
+        if not m:
+            return None
+        import base64
+
+        runner = base64.b64decode(m.group(1)).decode("utf-16-le")
+        p = re.search(r"& '([^']+\.ps1)'", runner)
+        if not p or not Path(p.group(1)).exists():
+            return None
+        return Path(p.group(1)).read_text(encoding="utf-8-sig")
 
     def write(self, path: str, data: bytes) -> None:
         target = Path(path)
@@ -115,14 +164,13 @@ class OneSpaceClient:
 
 pytest.importorskip("tools.environments.base", reason="needs Hermes installed")
 
-from hermes_cua_spaces import windows_files  # noqa: E402
 from hermes_cua_spaces.environment import CuaSpaceEnvironment  # noqa: E402
 
 
 @pytest.fixture(params=[True, False], ids=["git-bash", "no-bash"])
 def with_bash(request):
     if ON_WINDOWS and not request.param:
-        pytest.skip("a real Windows runner has Git Bash; the no-bash case is covered on Linux and macOS")
+        pytest.skip("a real Windows runner has Git Bash; the install case is covered on Linux and macOS")
     return request.param
 
 
@@ -145,7 +193,7 @@ def term(env, command, **kw):
 
 @needs_powershell
 def test_cwd_starts_in_the_user_profile(winenv):
-    assert winenv.windows_info.home and winenv.cwd == winenv.windows_info.home
+    assert winenv.windows_info.home and winenv.cwd == win.to_msys(winenv.windows_info.home)
 
 
 @needs_powershell
@@ -193,7 +241,7 @@ def test_working_folder_is_remembered(winenv, tmp_path):
     sub = tmp_path / "sub folder"
     sub.mkdir()
     term(winenv, f"Set-Location -LiteralPath '{sub}'")
-    assert Path(winenv.cwd).resolve() == sub.resolve()
+    assert Path(win.from_msys(winenv.cwd)).resolve() == sub.resolve()
     assert Path(term(winenv, "(Get-Location).Path")["output"].strip()).resolve() == sub.resolve()
 
 
@@ -209,6 +257,12 @@ def test_long_command_is_not_limited_by_the_command_line(winenv):
     assert len(big) > 40000
     r = term(winenv, big)
     assert r["returncode"] == 0 and r["output"].split()[-1] == "end"
+
+
+@needs_powershell
+def test_temp_folder_is_absolute_for_hermes(winenv):
+    # Hermes ignores a temp folder that does not start with "/" and uses the host's: it must stay in the Space.
+    assert winenv.get_temp_dir().startswith("/")
 
 
 @needs_powershell
@@ -229,12 +283,28 @@ def test_background_and_compound_syntax_is_left_alone(winenv):
 
 
 @needs_powershell
-def test_unix_tools_use_bash_or_say_so(winenv, with_bash):
+def test_unix_tools_run_in_git_bash(winenv, with_bash):
     r = winenv.execute("echo from-bash && pwd")  # not the terminal tool: a Unix shell command
-    if with_bash:
-        assert r["returncode"] == 0 and "from-bash" in r["output"]
-    else:
-        assert r["returncode"] == 127 and "Git for Windows" in r["output"]
+    assert r["returncode"] == 0 and "from-bash" in r["output"]
+    assert winenv.windows_info.bash
+    assert getattr(winenv._space, "bridged", False)  # the /c/ -> C:\\ folder alias was set up
+    # A Space without Git for Windows got it installed once; one that had it was left alone.
+    assert winenv._space.installs == (0 if with_bash else 1)
+
+
+@needs_powershell
+def test_missing_git_that_cannot_be_installed_fails_with_the_fix(tmp_path):
+    if ON_WINDOWS:
+        pytest.skip("a real Windows runner has Git Bash")
+    from hermes_cua_spaces.errors import UnsupportedSpaceError
+
+    space = PowerShellSpace(tmp_path, with_bash=False, install_works=False)
+    with pytest.raises(UnsupportedSpaceError) as err:
+        CuaSpaceEnvironment(
+            cwd="/root", timeout=60, task_id="t", settings=Settings(), client=OneSpaceClient(space), persistent=True
+        )
+    assert "winget install --id Git.Git -e" in str(err.value) and "no network" in str(err.value)
+    assert space.installs == 1
 
 
 @needs_powershell
@@ -250,8 +320,7 @@ def test_unix_tool_error_does_not_break_the_terminal(winenv):
 def fops(winenv):
     from tools.file_operations import ShellFileOperations
 
-    assert windows_files.install()
-    return ShellFileOperations(winenv)
+    return ShellFileOperations(winenv)  # Hermes's own file tools, unchanged
 
 
 @needs_powershell
@@ -294,15 +363,6 @@ def test_missing_file_is_plain(fops, tmp_path):
 
 
 @needs_powershell
-def test_crlf_and_bom_survive_a_rewrite(fops, tmp_path):
-    f = tmp_path / "win.txt"
-    f.write_bytes(b"\xef\xbb\xbfa\r\nb\r\n")
-    assert fops.read_file(str(f)).content.startswith("     1|a") or "a" in fops.read_file(str(f)).content
-    assert not fops.write_file(str(f), "a\nc\n").error
-    assert f.read_bytes() == b"\xef\xbb\xbfa\r\nc\r\n"
-
-
-@needs_powershell
 def test_patch_replace(fops, tmp_path):
     f = tmp_path / "p.py"
     f.write_text("def f():\n    return 1\n")
@@ -315,6 +375,7 @@ def test_patch_replace(fops, tmp_path):
 def test_delete_and_move(fops, tmp_path):
     a, b = tmp_path / "a.txt", tmp_path / "deep" / "b.txt"
     a.write_text("x")
+    b.parent.mkdir()  # Hermes's own move does not create folders
     assert not fops.move_file(str(a), str(b)).error and b.exists() and not a.exists()
     assert not fops.delete_file(str(b)).error and not b.exists()
     assert not fops.delete_file(str(b)).error  # already gone is fine
@@ -332,36 +393,10 @@ def test_binary_file_is_not_dumped(fops, tmp_path):
 
 
 @needs_powershell
-def test_search_needs_bash_and_says_so(fops, tmp_path, with_bash):
+def test_search(fops, tmp_path):
     (tmp_path / "s.txt").write_text("needle here\n")
     r = fops.search("needle", str(tmp_path))
-    if with_bash:
-        assert not r.error and r.total_count >= 1
-    else:
-        assert r.error and "Git for Windows" in r.error
-
-
-def test_other_environments_keep_hermes_own_file_code(tmp_path):
-    """The Windows replacements hand everything that is not a Windows Space back to Hermes."""
-    from tools.file_operations import ShellFileOperations
-
-    if ON_WINDOWS:
-        pytest.skip("needs /bin/sh")
-    windows_files.install()
-    (tmp_path / "z.txt").write_text("plain\n")
-
-    class Plain:
-        cwd = str(tmp_path)
-        seen: list = []
-
-        def execute(self, command, cwd="", **kw):
-            self.seen.append(command)
-            p = subprocess.run(["/bin/sh", "-c", command], capture_output=True, cwd=cwd or self.cwd)
-            return {"output": (p.stdout + p.stderr).decode(), "returncode": p.returncode}
-
-    env = Plain()
-    assert "plain" in ShellFileOperations(env).read_file(str(tmp_path / "z.txt")).content
-    assert any("sed" in c or "cat" in c or "wc" in c for c in env.seen)  # Hermes's own shell commands ran
+    assert not r.error and r.total_count >= 1
 
 
 def test_provider_describes_a_windows_space(tmp_path):
@@ -369,7 +404,7 @@ def test_provider_describes_a_windows_space(tmp_path):
 
     if PWSH is None:
         pytest.skip("needs PowerShell (pwsh)")
-    space = PowerShellSpace(tmp_path, with_bash=False)
+    space = PowerShellSpace(tmp_path, with_bash=True)
     provider = plugin.CuaSpacesProvider(get_config=lambda k, default=None: default, client=OneSpaceClient(space))
     assert "Windows" in provider.env_description  # names all three systems before a Space is known
     env = provider.create_environment(cwd="/root", timeout=30, task_id="w")
@@ -378,3 +413,15 @@ def test_provider_describes_a_windows_space(tmp_path):
         assert "PowerShell" in provider.env_description
     finally:
         env.cleanup()
+
+
+def test_install_scripts_are_pinned_and_checked():
+    from hermes_cua_spaces import windows_setup as g
+
+    git, py = g.install_script(), g.install_python_script()
+    assert all(len(h) == 64 for h in (*g.GIT_SHA256.values(), *g.PY_SHA256.values()))
+    assert g.GIT_SHA256["64-bit"] in git and g.GIT_TAG in git and "/VERYSILENT" in git and "winget" in git
+    assert g.PY_SHA256["64-bit"] in py and g.PY_VERSION in py and "/quiet" in py
+    assert "@" not in git.replace("@(", "").replace("@{", "") and "@PYV@" not in py
+    assert g.parse_result("x\nhermes-cua-git-ok=C:/Program Files/Git/bin/bash.exe\n") == ("C:/Program Files/Git/bin/bash.exe", "")
+    assert g.parse_result("hermes-cua-git-failed=no network\n") == ("", "no network")

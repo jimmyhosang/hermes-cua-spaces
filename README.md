@@ -122,7 +122,7 @@ Hermes keeps its memory in your Cua Volume, so it survives if the Space is repla
 
 ## Windows Spaces
 
-Windows Spaces are new in 0.2.0. Point the plugin at a Windows Space you have, or make one:
+Point the plugin at a Windows Space you have, or make one:
 
 ```bash
 cua spaces create windows --name my-pc
@@ -133,17 +133,17 @@ hermes config set plugins.entries.cua-spaces.settings.image windows
 
 The first Windows Space takes a while to create while Cua downloads the machine image. A Windows Space on an Apple silicon Mac runs by emulation and is slow; use a Windows Space on an x86 machine or in your cloud account for real work.
 
-Hermes was written for a Unix shell, so a few tools behave differently on Windows:
+Hermes runs on Windows through Git Bash, and the plugin does the same. **A Windows Space needs Git for Windows.** The Cua Windows image has it. If a Windows Space does not, the plugin installs it the first time Hermes connects (the official installer, checked against its SHA-256, with `winget` as a fallback), and shows a clear error naming the fix if it cannot, for example when the Space has no internet: install it yourself with `winget install --id Git.Git -e` in the Space's PowerShell, then start Hermes again.
 
 | Hermes tool | On a Windows Space |
 |---|---|
 | `terminal` | Runs in PowerShell: `pwsh` (PowerShell 7) if the Space has it, otherwise the `powershell.exe` that ships with Windows. Write PowerShell, not bash: `Get-ChildItem`, not `ls -la`. Hermes tells the model this. The folder you `cd` into is remembered between commands. A command's exit code is the last command's: a failing program's own exit code, `1` for a PowerShell error, or the number in `exit N`. Output is UTF-8. |
-| File tools: read, write, patch | Work on Windows paths (`C:\Users\cua\app.py`, `C:/Users/cua/app.py` or `~\app.py`). A relative path starts from the terminal's current folder. Files keep their line endings (LF or CRLF) and byte-order mark. |
-| File search | Needs Git for Windows in the Space (it brings `bash`, `grep` and `find`). Without it the tool says so, in plain words, and nothing else is affected. |
-| Background processes, `execute_code` | Run Unix shell commands. They use Git for Windows' bash when the Space has it, and say what to install when it doesn't. |
+| File tools (read, write, patch, delete, move), file search, background processes, `execute_code` | Hermes's own tools, unchanged, running in Git Bash. Name files the Git Bash way: `/c/Users/cua/app.py` for `C:\Users\cua\app.py` (Hermes tells the model). A relative path starts from the terminal's current folder. |
 | Browser tools, `computer_use`, Bot Desktop | Not in a Windows Space: they use your own machine. |
 
-To turn on the Unix-shell tools, install Git for Windows in the Space, from its PowerShell: `winget install --id Git.Git -e`. Hermes finds it next time it connects.
+Hermes also uses the Space's Python for deleting and moving files and for `execute_code`, so a Space without Python gets it installed the same way (the pinned python.org installer). To make `/c/Users/...` mean the same thing to bash and to Windows programs, the plugin adds a folder alias `C:\c` pointing at `C:\` (one per fixed drive). If Git for Windows cannot be installed the plugin stops with an error; if Python cannot, it logs a warning and only those features are unavailable.
+
+The plugin never replaces or patches Hermes's own tools or modules. It uses only Hermes's public plugin interface for terminal backends.
 
 If a Space cannot start PowerShell, the plugin says so and names the Space. Linux and macOS Spaces are unchanged.
 
@@ -186,7 +186,7 @@ The plugin explains errors in plain words and says what to run next. The most co
 | "Cua can't find the Space ..." | `cua spaces ls`, then fix the `space` setting or use `create` |
 | "Cua can't start a Space here yet" | `cua doctor` shows what is missing |
 | "The `cua` Python package is not installed" | `hermes pm repair` |
-| "This Hermes tool runs Unix shell commands, and this Windows Space has no Unix shell" | Install Git for Windows in the Space: `winget install --id Git.Git -e`. Or use the terminal tool, which works without it |
+| "The Windows Space ... has no Git for Windows, and the plugin could not install it" | Install Git for Windows in the Space (`winget install --id Git.Git -e`), check it has internet and admin rights, then start Hermes again |
 | "Could not start PowerShell in the Windows Space ..." | Check the Space is running (`cua spaces ls`) and that `powershell.exe` runs in it |
 
 ## Develop
@@ -195,7 +195,7 @@ The plugin explains errors in plain words and says what to run next. The most co
 uv venv --python 3.14 && source .venv/bin/activate
 # Hermes: clone a tag and install it editable. The PyPI "hermes-agent" is old and has no plugin API,
 # and Hermes cannot be built into a wheel from git.
-git clone --depth 1 --branch v0.22.2 https://github.com/NousResearch/hermes-agent.git ../hermes-agent   # latest release
+git clone --depth 1 --branch v0.22.3 https://github.com/NousResearch/hermes-agent.git ../hermes-agent   # latest release
 # or, for the start-directory and Bot Desktop support: --branch main
 pip install -e ../hermes-agent
 pip install -e ".[test]"
