@@ -182,7 +182,8 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
     def get_temp_dir(self) -> str:
         win_info = getattr(self, "_win", None)
-        return win_info.temp if win_info is not None else super().get_temp_dir()
+        # Hermes only accepts a temp folder that starts with "/": give it the Git Bash form (/c/Users/..).
+        return win.to_msys(win_info.temp) if win_info is not None else super().get_temp_dir()
 
     def _probe_windows(self) -> win.WindowsInfo:
         try:
@@ -330,7 +331,8 @@ class CuaSpaceEnvironment(BaseEnvironment):
 
         def stage(path: str, text: str, *, bom: bool = False) -> None:
             data = text.encode("utf-8-sig" if bom else "utf-8", "surrogateescape")
-            self._call(lambda sp: sp.write(path, data))
+            target = win.from_msys(path)  # Hermes's temp paths are in Git Bash form
+            self._call(lambda sp: sp.write(target, data))
 
         def exec_fn() -> tuple[str, int]:
             try:
@@ -340,7 +342,7 @@ class CuaSpaceEnvironment(BaseEnvironment):
                         staged_in = self._staged_stdin_path()
                         stage(staged_in, stdin_data)
                     ps_path = win.script_path(info, run_id, "ps1")
-                    stage(ps_path, win.build_powershell_script(script.command, script.cwd, self._cwd_marker, staged_in), bom=True)
+                    stage(ps_path, win.build_powershell_script(script.command, script.cwd, self._cwd_marker, win.from_msys(staged_in) if staged_in else ""), bom=True)
                     line = win.powershell_line(info, ps_path)
                 else:
                     command = script.command
@@ -356,7 +358,9 @@ class CuaSpaceEnvironment(BaseEnvironment):
                 result: ExecResult = self._call(lambda sp: sp.run(line, timeout))
             except CuaSpacesError as exc:
                 return (f"[Cua Space error: {exc}]\n", 1)
-            return (win.clean_output(result.output), result.exit_code)
+            out = win.clean_output(result.output)
+            logger.debug("Windows %s command in %s exited %s: %r", script.kind, self._space.name, result.exit_code, out[-300:])
+            return (out, result.exit_code)
 
         def cancel() -> None:
             try:

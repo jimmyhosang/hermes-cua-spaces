@@ -260,6 +260,12 @@ def test_long_command_is_not_limited_by_the_command_line(winenv):
 
 
 @needs_powershell
+def test_temp_folder_is_absolute_for_hermes(winenv):
+    # Hermes ignores a temp folder that does not start with "/" and uses the host's: it must stay in the Space.
+    assert winenv.get_temp_dir().startswith("/")
+
+
+@needs_powershell
 def test_scripts_are_cleaned_up(winenv, tmp_path):
     temp = Path(winenv.windows_info.temp)
     before = set(temp.glob("hermes-cua-*"))
