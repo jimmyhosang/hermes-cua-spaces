@@ -138,8 +138,10 @@ Hermes runs on Windows through Git Bash, and the plugin does the same. **A Windo
 | Hermes tool | On a Windows Space |
 |---|---|
 | `terminal` | Runs in PowerShell: `pwsh` (PowerShell 7) if the Space has it, otherwise the `powershell.exe` that ships with Windows. Write PowerShell, not bash: `Get-ChildItem`, not `ls -la`. Hermes tells the model this. The folder you `cd` into is remembered between commands. A command's exit code is the last command's: a failing program's own exit code, `1` for a PowerShell error, or the number in `exit N`. Output is UTF-8. |
-| File tools (read, write, patch, delete, move), file search, background processes, `execute_code` | Hermes's own tools, unchanged, running in Git Bash. Windows paths work (`C:/Users/cua/app.py`), and a relative path starts from the terminal's current folder. |
+| File tools (read, write, patch, delete, move), file search, background processes, `execute_code` | Hermes's own tools, unchanged, running in Git Bash. Name files the Git Bash way: `/c/Users/cua/app.py` for `C:\Users\cua\app.py` (Hermes tells the model). A relative path starts from the terminal's current folder. |
 | Browser tools, `computer_use`, Bot Desktop | Not in a Windows Space: they use your own machine. |
+
+Hermes also uses the Space's Python for deleting and moving files and for `execute_code`, so a Space without Python gets it installed the same way (the pinned python.org installer). To make `/c/Users/...` mean the same thing to bash and to Windows programs, the plugin adds a folder alias `C:\c` pointing at `C:\` (one per fixed drive). If Git for Windows cannot be installed the plugin stops with an error; if Python cannot, it logs a warning and only those features are unavailable.
 
 The plugin never replaces or patches Hermes's own tools or modules. It uses only Hermes's public plugin interface for terminal backends.
 
