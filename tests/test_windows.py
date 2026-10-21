@@ -193,7 +193,7 @@ def term(env, command, **kw):
 
 @needs_powershell
 def test_cwd_starts_in_the_user_profile(winenv):
-    assert winenv.windows_info.home and winenv.cwd == winenv.windows_info.home
+    assert winenv.windows_info.home and winenv.cwd == win.to_msys(winenv.windows_info.home)
 
 
 @needs_powershell
@@ -241,7 +241,7 @@ def test_working_folder_is_remembered(winenv, tmp_path):
     sub = tmp_path / "sub folder"
     sub.mkdir()
     term(winenv, f"Set-Location -LiteralPath '{sub}'")
-    assert Path(winenv.cwd).resolve() == sub.resolve()
+    assert Path(win.from_msys(winenv.cwd)).resolve() == sub.resolve()
     assert Path(term(winenv, "(Get-Location).Path")["output"].strip()).resolve() == sub.resolve()
 
 
