@@ -17,6 +17,7 @@ ENV_SPACE = "HERMES_CUA_SPACE"
 ENV_ON = "HERMES_CUA_ON"
 ENV_IMAGE = "HERMES_CUA_IMAGE"
 ENV_KEEP = "HERMES_CUA_KEEP"
+ENV_DESKTOP = "HERMES_CUA_DESKTOP"
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,8 @@ class Settings:
     create_timeout_s: int = DEFAULT_CREATE_TIMEOUT_S
     # Delete a Space this plugin created when the Hermes session ends. Never applies to a Space you named.
     delete_on_exit: bool = True
+    # Install what Bot Desktop, computer_use and the browser need into a Linux Space that lacks it.
+    desktop: bool = False
 
     @property
     def creates(self) -> bool:
@@ -76,8 +79,19 @@ def load_settings(
     else:
         raw = cfg("delete_on_exit", True)
         delete = raw if isinstance(raw, bool) else str(raw).strip().lower() not in ("0", "false", "no", "off")
+    desk_env = str(env.get(ENV_DESKTOP) or "").strip().lower()
+    if desk_env:
+        desktop = desk_env in ("1", "true", "yes", "on")
+    else:
+        raw = cfg("desktop", False)
+        desktop = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("1", "true", "yes", "on")
     return Settings(
-        space=space or CREATE, on=on, image=image, create_timeout_s=timeout, delete_on_exit=delete
+        space=space or CREATE,
+        on=on,
+        image=image,
+        create_timeout_s=timeout,
+        delete_on_exit=delete,
+        desktop=desktop,
     ).validate()
 
 

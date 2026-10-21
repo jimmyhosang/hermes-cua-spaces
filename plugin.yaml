@@ -1,5 +1,5 @@
 name: cua-spaces
-version: "0.2.0"
+version: "0.3.0"
 manifest_version: 2
 description: Run Hermes terminal, file and code tools inside a Cua Space (an isolated Linux, macOS or Windows machine you can watch live).
 author: Cua
@@ -8,7 +8,7 @@ license: MIT
 homepage: https://github.com/trycua/hermes-cua-spaces
 tags: [terminal, sandbox, cua]
 python_dependencies:
-  - "cua>=0.5.0,<0.6"
+  - "cua>=0.5.0,<0.8"
 provides_tools: []
 provides_hooks: []
 capabilities: []
@@ -33,6 +33,11 @@ config_schema:
     default: 600
     label: Create timeout (seconds)
     description: "How long to wait for a new Space to be ready."
+  desktop:
+    type: bool
+    default: false
+    label: Install the desktop stack
+    description: "Install what Bot Desktop, computer_use and the browser need (TigerVNC, Chromium, agent-browser, cua-driver) into a Linux Space that lacks it. Takes a few minutes, once."
   delete_on_exit:
     type: bool
     default: true

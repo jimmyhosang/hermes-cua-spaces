@@ -16,11 +16,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agent.terminal_env_provider import TerminalEnvironmentProvider
 
-from . import windows, windows_files
+from . import streams, windows, windows_files
 from .config import Settings, load_settings
 from .errors import CuaSpacesError
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 _client_lock = threading.Lock()
 _client: Any = None
@@ -45,6 +45,9 @@ class CuaSpacesProvider(TerminalEnvironmentProvider):
     # With `terminal.container_persistent: false` each Hermes session gets its own Space,
     # so several Hermes runs in parallel never share one machine by accident.
     session_isolated_when_nonpersistent = True
+    # Bot Desktop, computer_use and the browser follow the terminal into the Space through the
+    # environment's exec_prefix(). Older Hermes versions ignore this attribute.
+    supports_streams = True
 
     def __init__(self, get_config: Any = None, client: Any = None) -> None:
         self._get_config = get_config
@@ -72,6 +75,11 @@ class CuaSpacesProvider(TerminalEnvironmentProvider):
             return False
 
     @property
+    def default_cwd(self) -> Optional[str]:
+        """Start in the Space user's own home. Older Hermes never reads this and sends "/root"."""
+        return "~" if streams.hermes_sets_start_dir() else None
+
+    @property
     def strip_env_keys(self) -> frozenset:
         return frozenset({"CUA_API_KEY", "CUA_DAEMON_TOKEN"})
 
@@ -96,7 +104,11 @@ class CuaSpacesProvider(TerminalEnvironmentProvider):
         cli = shutil.which("cua") is not None
         return [
             (sdk, "Cua Python SDK", "(installed)" if sdk else "(missing: run `hermes pm repair`)"),
-            (cli, "cua command", "(found)" if cli else "(not on PATH: optional, install from https://cua.ai)"),
+            (
+                cli,
+                "cua command",
+                "(found)" if cli else "(not on PATH: needed for Bot Desktop, computer_use and the browser in the Space; install from https://cua.ai)",
+            ),
         ]
 
     def create_environment(

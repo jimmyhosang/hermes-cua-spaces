@@ -113,7 +113,7 @@ class SdkSpacesClient:
         except ImportError as exc:
             raise CuaSpacesError(
                 "The `cua` Python package is not installed. Run `hermes pm repair`, "
-                "or `pip install 'cua>=0.5.0,<0.6'` in the Hermes environment."
+                "or `pip install 'cua>=0.5.0,<0.8'` in the Hermes environment."
             ) from exc
         self._cua = cua
         # Same topology as the `cua` command: the running `cua daemon` (so Spaces and your cua.ai
